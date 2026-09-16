@@ -17,18 +17,23 @@ else:
 
 # --- FUNGSI UNTUK DOWNLOAD AUDIO DARI YOUTUBE ---
 def download_youtube_audio(url):
+    # Penyamaran ganda: Menggunakan profil Android + Browser Chrome
     ydl_opts = {
         'format': 'm4a/bestaudio/best',
         'outtmpl': 'lagu_sementara.%(ext)s',
         'noplaylist': True,
         'quiet': True,
-        # INI ADALAH TRIK BARU: Menyamar sebagai HP Android untuk menghindari pemblokiran YouTube
-        'extractor_args': {'youtube': ['player_client=android']} 
+        'extractor_args': {
+            'youtube': ['player_client=android', 'player_skip=webpage']
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
-        filename = f"lagu_sementara.{info['ext']}"
-        return filename
+        return f"lagu_sementara.{info['ext']}"
 
 # --- FUNGSI UNTUK MENGANALISA LAGU DENGAN GEMINI AI ---
 def analyze_audio(file_path):
@@ -53,55 +58,84 @@ def analyze_audio(file_path):
 
 # --- TAMPILAN APLIKASI ---
 st.title("🎵 AI Music Analyzer & Prompt Generator")
-st.markdown("Masukkan link YouTube, dan AI akan membongkar elemen musiknya untuk dijadikan *Prompt*.")
+st.markdown("Masukkan link YouTube untuk membongkar elemen musiknya.")
 
+# --- FITUR UTAMA: LINK YOUTUBE ---
 youtube_url = st.text_input("Link YouTube", placeholder="https://www.youtube.com/watch?v=...")
+tombol_youtube = st.button("Analisis Lagu", type="primary")
 
-if st.button("Analisis", type="primary"):
-    if youtube_url:
-        with st.spinner("Sedang mengunduh lagu dan menganalisa (ini bisa memakan waktu 1-2 menit)..."):
-            try:
+st.write("") # Memberi sedikit jarak spasi
+
+# --- FITUR CADANGAN: UPLOAD MANUAL (Disembunyikan) ---
+with st.expander("Opsi Cadangan (Gunakan hanya jika link YouTube error/diblokir)"):
+    uploaded_file = st.file_uploader("Unggah file lagu (MP3, WAV, M4A)", type=['mp3', 'wav', 'm4a'])
+    tombol_upload = st.button("Analisis File Upload")
+
+# --- LOGIKA EKSEKUSI ---
+file_audio = None
+siap_analisa = False
+is_youtube = False
+
+if tombol_youtube and youtube_url:
+    siap_analisa = True
+    is_youtube = True
+elif tombol_upload and uploaded_file is not None:
+    siap_analisa = True
+    is_youtube = False
+
+if siap_analisa:
+    with st.spinner("Sedang memproses lagu dan menganalisa (ini bisa memakan waktu 1-2 menit)..."):
+        try:
+            if is_youtube:
                 file_audio = download_youtube_audio(youtube_url)
-                hasil_mentah = analyze_audio(file_audio)
+            else:
+                ekstensi = uploaded_file.name.split('.')[-1]
+                file_audio = f"lagu_upload.{ekstensi}"
+                with open(file_audio, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+
+            hasil_mentah = analyze_audio(file_audio)
+            
+            if "```json" in hasil_mentah:
+                hasil_mentah = hasil_mentah.replace("```json\n", "").replace("\n```", "")
+            
+            hasil_json = json.loads(hasil_mentah)
+            
+            # Hapus file audio sementara dari server
+            if file_audio and os.path.exists(file_audio):
+                os.remove(file_audio)
+
+            st.success("Analisa selesai!")
+            st.divider()
+
+            col1, col2 = st.columns([1, 1])
+
+            with col1:
+                st.subheader("Hasil Breakdown")
+                st.write("**Genre terdeteksi:**")
+                st.write(hasil_json.get("genre", "-"))
                 
-                if "```json" in hasil_mentah:
-                    hasil_mentah = hasil_mentah.replace("```json\n", "").replace("\n```", "")
+                st.write("**Perkiraan tempo:**")
+                st.write(hasil_json.get("tempo", "-"))
                 
-                hasil_json = json.loads(hasil_mentah)
+                st.write("**Mood:**")
+                st.write(hasil_json.get("mood", "-"))
                 
-                if os.path.exists(file_audio):
-                    os.remove(file_audio)
+                st.write("**Instrumen dominan:**")
+                st.write(hasil_json.get("instrumen", "-"))
+                
+                st.write("**Vokal:**")
+                st.write(hasil_json.get("vokal", "-"))
+                
+                st.caption("Breakdown ini mendeskripsikan gaya musik secara umum — bukan menyalin lirik atau meniru vokal artis aslinya.")
 
-                st.success("Analisa selesai!")
-                st.divider()
-
-                col1, col2 = st.columns([1, 1])
-
-                with col1:
-                    st.subheader("Hasil Breakdown")
-                    st.write("**Genre terdeteksi**")
-                    st.write(hasil_json.get("genre", "-"))
-                    
-                    st.write("**Perkiraan tempo**")
-                    st.write(hasil_json.get("tempo", "-"))
-                    
-                    st.write("**Mood**")
-                    st.write(hasil_json.get("mood", "-"))
-                    
-                    st.write("**Instrumen dominan**")
-                    st.write(hasil_json.get("instrumen", "-"))
-                    
-                    st.write("**Vokal**")
-                    st.write(hasil_json.get("vokal", "-"))
-                    
-                    st.caption("Breakdown ini mendeskripsikan gaya musik secara umum — bukan menyalin lirik atau meniru vokal artis aslinya.")
-
-                with col2:
-                    st.subheader("Prompt Preview")
-                    st.info(hasil_json.get("prompt_suno", "Prompt gagal dibuat."))
-                    st.markdown("*(Prompt di atas siap di-*copy* ke Suno atau Flow Music)*")
-                    
-            except Exception as e:
-                st.error(f"Terjadi kesalahan: {e}")
-    else:
-        st.warning("Mohon masukkan link YouTube terlebih dahulu.")
+            with col2:
+                st.subheader("Prompt Preview")
+                st.info(hasil_json.get("prompt_suno", "Prompt gagal dibuat."))
+                st.markdown("*(Prompt di atas siap di-*copy* ke Suno atau Flow Music)*")
+                
+        except Exception as e:
+            if "403" in str(e) or "HTTP Error" in str(e):
+                st.error("🚨 YouTube saat ini sedang memblokir akses dari server. Jangan khawatir, silakan klik 'Opsi Cadangan' di bawah untuk mengunggah lagunya secara manual.")
+            else:
+                st.error(f"Terjadi kesalahan sistem: {e}")
